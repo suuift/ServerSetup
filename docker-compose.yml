@@ -1,0 +1,507 @@
+version: "3.9"
+
+########################### NETWORKS
+# You may customize the network subnet (192.168.89.0/24) below as you please.
+# Docker Compose version 3.5 or higher required to define networks this way.
+
+networks:
+  default:
+    driver: bridge
+  npm_proxy:
+    name: npm_proxy
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 192.168.89.0/24
+
+  # If you decide to use Socket Proxy, you need socket_proxy network as we. See https://www.smarthomebeginner.com/traefik-docker-security-best-practices/#9_Use_a_Docker_Socket_Proxy
+
+########################### EXTENSION FIELDS
+# Helps eliminate repetition of sections
+# More Info on how to use this: https://github.com/htpcBeginner/docker-traefik/pull/228
+
+# Common environment values
+x-environment: &default-tz-puid-pgid
+  TZ: $TZ
+  PUID: $PUID
+  PGID: $PGID
+
+# Keys common to some of the core services that we always to automatically restart on failure
+x-common-keys-core: &common-keys-core
+  networks:
+    - npm_proxy
+  security_opt:
+    - no-new-privileges:true
+  restart: always
+
+# Keys common to some of the dependent services/apps
+x-common-keys-apps: &common-keys-apps
+  networks:
+    - npm_proxy
+  security_opt:
+    - no-new-privileges:true
+  restart: unless-stopped
+
+########################### SERVICES
+services:
+
+  # Nginx Proxy Manager - Reverse Proxy with LetsEncrypt
+  npm:
+    <<: *common-keys-core # See EXTENSION FIELDS at the top
+    container_name: nginx-proxy-manager
+    image: 'jc21/nginx-proxy-manager:latest'
+    # For Static IP
+    networks:
+    # For Static IP
+      npm_proxy:
+        ipv4_address: 192.168.89.254 # You can specify a static IP
+    # For Dynamic IP
+    #networks:
+    #  - npm_proxy
+    ports:
+      - '80:80' # Public HTTP Port. Port Forwarding on Router is ON.
+      - '443:443' # Public HTTPS Port. Port Forwarding on Router is ON.
+      - '81:81' # Admin Web Port. Port Forwarding on Router is OFF. Internal Home Network Access only - 192.168.89.254:81.
+    volumes:
+      - $DOCKERDIR/appdata/npm/config:/config 
+      - $DOCKERDIR/appdata/npm/letsencrypt:/etc/letsencrypt
+      - $DOCKERDIR/appdata/npm/data:/data
+    environment:
+      DB_SQLITE_FILE: "/config/database.sqlite"
+      DISABLE_IPV6: 'true'
+
+  # Portainer - WebUI for Containers
+  portainer:
+    container_name: portainer
+    image: portainer/portainer-ce:latest
+    command: -H unix:///var/run/docker.sock # # Use Docker Socket Proxy instead for improved security
+    #command: -H tcp://socket-proxy:2375
+    ports:
+      - 9443:9443
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro # # Use Docker Socket Proxy instead for improved security
+      - $DOCKERDIR/appdata/portainer/data:/data # Change to local directory if you want to save/transfer config locally
+    <<: *common-keys-core
+    environment:
+      <<: *default-tz-puid-pgid
+
+  # TV Download Management  
+  sonarr:
+    image: lscr.io/linuxserver/sonarr:latest
+    container_name: sonarr
+    <<: *common-keys-apps
+    volumes:
+      - $DOCKERDIR/appdata/sonarr/config:/config
+      - $DRIVEPOOL/Media/TV:/tv #optional
+      - $DRIVEPOOL/Media/Anime:/anime #optional
+      - $DRIVEPOOL/Media/downloads:/downloads #optional
+    ports:
+      - 8989:8989
+    environment:
+      <<: *default-tz-puid-pgid
+
+  # Movie Download Management      
+  radarr:
+    image: lscr.io/linuxserver/radarr:latest
+    container_name: radarr
+    <<: *common-keys-apps
+    volumes:
+      - $DOCKERDIR/appdata/radarr/config:/config
+      - $DRIVEPOOL/Media/Movies:/movies #optional
+      - $DRIVEPOOL/Media/downloads:/downloads #optional
+    ports:
+      - 7878:7878
+    environment:
+      <<: *default-tz-puid-pgid
+
+  # Torrent Downloader   
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    container_name: qbit
+    <<: *common-keys-apps
+    environment:
+      - WEBUI_PORT=8081
+    volumes:
+      - $DOCKERDIR/appdata/qbit/config:/config
+      - $DRIVEPOOL/Media/downloads:/downloads
+    ports:
+      - 8081:8081
+      - 6881:6881
+      - 6881:6881/udp
+
+  # Plex Statistics      
+  tautulli:
+    image: lscr.io/linuxserver/tautulli:latest
+    container_name: tautulli
+    <<: *common-keys-apps
+    volumes:
+      - $DOCKERDIR/appdata/tautulli/config:/config
+    ports:
+      - 8181:8181
+    environment:
+      <<: *default-tz-puid-pgid
+  # NZB Downloader      
+  sabnzbd:
+    image: lscr.io/linuxserver/sabnzbd:latest
+    container_name: sabnzbd
+    <<: *common-keys-apps
+    volumes:
+      - $DOCKERDIR/appdata/sabnzbd/config:/config
+      - $DRIVEPOOL/Media/downloads:/downloads #optional
+      - $DRIVEPOOL/Media/downloads/incomplete:/incompletedownloads #optional
+    ports:
+      - 8080:8080
+    environment:
+      <<: *default-tz-puid-pgid
+
+  # Trackers for download managers
+  prowlarr:
+    image: lscr.io/linuxserver/prowlarr:develop
+    container_name: prowlarr
+    <<: *common-keys-apps
+    volumes:
+      - $DOCKERDIR/appdata/prowlarr/config:/config
+    ports:
+      - 9696:9696
+    environment:
+      <<: *default-tz-puid-pgid
+
+  # Book Download Management      
+  readarr:
+    image: lscr.io/linuxserver/readarr:develop
+    container_name: readarr
+    <<: *common-keys-apps
+    volumes:
+      - $DOCKERDIR/appdata/readarr/config:/config
+      - $DRIVEPOOL/Media/Books:/books #optional
+      - $DRIVEPOOL/Media/Audiobooks:/audiobooks #optional
+      - $DRIVEPOOL/Media/downloads:/downloads #optional
+    ports:
+      - 8787:8787
+    environment:
+      <<: *default-tz-puid-pgid
+
+  # Music Download Management  
+  lidarr:
+    image: lscr.io/linuxserver/lidarr:latest
+    container_name: lidarr
+    <<: *common-keys-apps
+    volumes:
+      - $DOCKERDIR/appdata/lidarr/config:/config
+      - $DRIVEPOOL/Media/Music:/music #optional
+      - $DRIVEPOOL/Media/downloads:/downloads #optional
+    ports:
+      - 8686:8686
+    environment:
+      <<: *default-tz-puid-pgid
+
+  # Subtitle Download Management        
+  bazarr:
+    image: lscr.io/linuxserver/bazarr:latest
+    container_name: bazarr
+    <<: *common-keys-apps
+    volumes:
+      - $DOCKERDIR/appdata/bazarr/config:/config
+      - $DRIVEPOOL/Media/Movies:/movies #optional
+      - $DRIVEPOOL/Media/TV:/tv #optional
+    ports:
+      - 6767:6767
+    environment:
+      <<: *default-tz-puid-pgid
+
+  # Auto Update dockers
+  watchtower:
+    image: containrrr/watchtower
+    container_name: watchtower
+    <<: *common-keys-core  
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      <<: *default-tz-puid-pgid
+
+  # Request Movies and Shows
+  overseerr:
+    image: lscr.io/linuxserver/overseerr:latest
+    container_name: overseerr
+    <<: *common-keys-apps
+    volumes:
+      - $DOCKERDIR/appdata/overseerr/config:/config
+    ports:
+      - 5055:5055
+    environment:
+      <<: *default-tz-puid-pgid
+
+  # Media Host      
+  plex:
+    image: lscr.io/linuxserver/plex:latest
+    container_name: plex
+    <<: *common-keys-core
+    #network_mode: host
+    environment:
+      - VERSION=docker
+      - PLEX_CLAIM=$PLEX_CLAIM #optional
+      - TZ=$TZ
+      - PUID=$PUID
+      - PGID=$PGID
+      - NVIDIA_VISIBLE_DEVICES=all
+    ports:
+      - 32400:32400
+      - 1900:1900/udp
+      - 3005:3005
+      - 8324:8324/tcp
+      - 5353:5353/udp
+      - 32410:32410/udp
+      - 32412:32412/udp
+      - 32413:32413/udp
+      - 32414:32414/udp
+      - 32469:32469
+    volumes:
+      - $DOCKERDIR/appdata/plex/config:/config
+      - $DRIVEPOOL/Media/TV:/tv
+      - $DRIVEPOOL/Media/Movies:/movies
+      - $DRIVEPOOL/Media/Anime:/anime
+      - $DRIVEPOOL/Media/Music:/music
+      - $DRIVEPOOL/Media/Audiobooks:/audiobooks
+      
+  # FOSS Media Host      
+  jellyfin:
+    image: lscr.io/linuxserver/jellyfin:latest
+    container_name: jellyfin
+    <<: *common-keys-core
+    environment:
+      <<: *default-tz-puid-pgid
+    ports:
+      - 8096:8096
+      #- 8920:8920 #optional
+      #- 7359:7359/udp #optional
+      #- 1900:1900/udp #optional
+    volumes:
+      - $DOCKERDIR/appdata/jellyfin/config:/config
+      - $DRIVEPOOL/Media/TV:/tv
+      - $DRIVEPOOL/Media/Movies:/movies
+      - $DRIVEPOOL/Media/Anime:/anime
+      - $DRIVEPOOL/Media/Music:/music
+      - $DRIVEPOOL/Media/Audiobooks:/audiobooks
+      - $DRIVEPOOL/Media/Books:/books
+    
+  # Hollow Knight Multiplayer Server   
+  hkserver:
+    image: maximalmax90/hkmpserver:latest
+    container_name: hkserver
+    <<: *common-keys-apps 
+    environment:
+     <<: *default-tz-puid-pgid
+    volumes:
+      - $DOCKERDIR/appdata/HKMP:/HKMP
+    ports:
+      - "2222:2222/udp"    
+    
+  # Basic website homepage   
+  homepage:
+    image: ghcr.io/benphelps/homepage:latest
+    container_name: homepage
+    <<: *common-keys-apps   
+    ports:
+      - 3000:3000
+    volumes:
+      - $DOCKERDIR/appdata/homepage/config:/app/config # Make sure your local config directory exists
+      - /var/run/docker.sock:/var/run/docker.sock # (optional) For docker integrations
+      - $USERDIR:/C
+      - $DRIVEPOOL:/H
+    environment:
+      <<: *default-tz-puid-pgid
+      
+# Docker-GC - Automatic Docker Garbage Collection
+# Create docker-gc-exclude file
+  dockergc:
+    <<: *common-keys-core
+    image: clockworksoul/docker-gc-cron:latest
+    container_name: docker-gc
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock # Use Docker Socket Proxy and comment this line for improved security.
+      - $DOCKERDIR/appdata/docker-gc/docker-gc-exclude:/etc/docker-gc-exclude # Create empty file
+    environment:
+      CRON: 0 0 0 * * ? # Everyday at midnight. Previously 0 0 * * *
+      FORCE_IMAGE_REMOVAL: 1
+      FORCE_CONTAINER_REMOVAL: 0
+      GRACE_PERIOD_SECONDS: 604800
+      DRY_RUN: 0
+      CLEAN_UP_VOLUMES: 1
+      TZ: $TZ
+      # DOCKER_HOST: tcp://socket-proxy:2375 # Use this if you have Socket Proxy enabled.
+
+  # Uptime Tracker  
+  uptime:
+    <<: *common-keys-core
+    image: louislam/uptime-kuma
+    container_name: uptime
+    ports:
+      - "3001:3001"
+    volumes:
+      - $DOCKERDIR/appdata/uptime:/app/data
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      <<: *default-tz-puid-pgid
+
+  # Comic Download Management     
+  mylar:
+    <<: *common-keys-apps
+    image: lscr.io/linuxserver/mylar3:latest
+    container_name: mylar
+    ports:
+      - "8090:8090"
+    volumes:
+      - $DOCKERDIR/appdata/mylar/config:/config
+      - $DRIVEPOOL/media/downloads:/downloads
+      - $DRIVEPOOL/media/comics:/comics
+    environment:
+      <<: *default-tz-puid-pgid
+
+  # Soulseek downloads        
+  soulseek:
+    <<: *common-keys-apps
+    image: realies/soulseek
+    container_name: soulseek
+    ports:
+      - "6080:6080"
+    volumes:
+      - $DOCKERDIR/appdata/soulseek/appdata/data:/data
+      - $DRIVEPOOL/media/downloads:/downloads
+      - $DRIVEPOOL/media/music:/music
+    environment:
+      <<: *default-tz-puid-pgid
+
+  goaccess:
+    <<: *common-keys-apps
+    image: xavierh/goaccess-for-nginxproxymanager:latest
+    container_name: goaccess
+    ports:
+      - 7880:7880
+    environment:
+      - PUID=$PUID
+      - PGID=$PGID
+      - TZ=$TZ
+      - SKIP_ARCHIVED_LOGS=False #optional
+      - DEBUG=False #optional
+      - BASIC_AUTH=True #optional
+      - BASIC_AUTH_USERNAME=$HTTP_USERNAME #optional
+      - BASIC_AUTH_PASSWORD=$HTTP_PASSWORD #optional   
+      - EXCLUDE_IPS=127.0.0.1 #optional - comma delimited 
+      - LOG_TYPE=NPM #optional - more information below
+    volumes:
+      - $DOCKERDIR/appdata/npm/logs:/opt/log
+      - $DOCKERDIR/appdata/goaccess/config:/config
+
+  # MariaDB - MySQL Database
+  mariadb:
+    <<: *common-keys-core # See EXTENSION FIELDS at the top
+    container_name: mariadb
+    image: linuxserver/mariadb:latest
+    restart: always
+    security_opt:
+      - no-new-privileges:true
+    ports:
+      - "3306:3306"
+    volumes:
+      - $DOCKERDIR/mariadb/config:/config
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+    environment:
+      - TRUSTED_PROXIES="*"
+      - PUID=$PUID
+      - PGID=$PGID
+      - MYSQL_ROOT_PASSWORD=$MYSQL_ROOT_PASSWORD
+      - MYSQL_USER=$MYSQL_USER
+      - MYSQL_PASSWORD=$MYSQL_PASSWORD
+      - MYSQL_DATABASE=panel
+      - MYSQL_DATABASE=guacamole
+
+  adminer:
+    <<: *common-keys-core # See EXTENSION FIELDS at the top
+    image: adminer:latest
+    container_name: adminer
+    depends_on:
+      - mariadb
+    volumes:
+      - $DOCKERDIR/appdata/adminer/config:/config
+    environment:
+      - TRUSTED_PROXIES="*"
+      - MYSQL_ROOT_PASSWORD=$MYSQL_ROOT_PASSWORD
+    ports:
+      - 8282:8080
+
+  # phpMyAdmin - Database management
+  # Create a new user with admin privileges. Cannot login as MySQL root for some reason.
+  phpmyadmin:
+    <<: *common-keys-apps # See EXTENSION FIELDS at the top
+    image: phpmyadmin/phpmyadmin:latest
+    container_name: phpmyadmin
+    ports:
+      - 8283:80
+    volumes:
+      - $DOCKERDIR/appdata/phpmyadmin/themes:/themes
+    environment:
+      - TRUSTED_PROXIES="*"
+      - PMA_HOST=$DB_HOST
+      - PMA_PORT=$DB_PORT
+      - MYSQL_USER=$MYSQL_USER
+      - MYSQL_PASSWORD=$MYSQL_PASSWORD
+      #- PMA_ARBITRARY=1
+      - MYSQL_ROOT_PASSWORD=$MYSQL_ROOT_PASSWORD
+    #secrets:
+      #- mysql_root_password
+
+  # Guacamole Daemon - Needed for Guacamole
+  guacd:
+    <<: *common-keys-core # See EXTENSION FIELDS at the top
+    image: guacamole/guacd
+    container_name: guacd
+    security_opt:
+      - no-new-privileges:true
+
+  # Guacamole - Remote desktop, SSH, on Telnet on any HTML5 Browser 
+  # Create all databases and tables first
+  guacamole:
+    <<: *common-keys-core # See EXTENSION FIELDS at the top
+    image: guacamole/guacamole:latest
+    container_name: guacamole
+    ports:
+      - 500:8080
+    environment:
+      GUACD_HOSTNAME: guacd
+      MYSQL_HOSTNAME: mariadb
+      MYSQL_PORT: $DB_PORT
+      MYSQL_DATABASE: guacamole
+      MYSQL_USER: $GUAC_MYSQL_USER
+      MYSQL_PASSWORD: $GUAC_MYSQL_PASSWORD
+
+  # WebUI for File Management
+  cloudcmd:
+    image: coderaiser/cloudcmd
+    container_name: cloudcmd
+    <<: *common-keys-apps
+    volumes:
+      - $DOCKERDIR/appdata/cloudcmd:/root
+      - $USERDIR:/1USERDIR #optional
+      - $DRIVEPOOL:/2DRIVEPOOL #optional
+    ports:
+      - 8000:8000
+    environment:
+      <<: *default-tz-puid-pgid
+
+  # Automatically sync files between devices        
+  syncthing:
+    image: lscr.io/linuxserver/syncthing:latest
+    container_name: syncthing
+    <<: *common-keys-apps
+    volumes:
+      - $DOCKERDIR/appdata/syncthing/config:/config
+      - $DRIVEPOOL:/drivepool #optional
+      - $USERDIR:/userdir #optional
+    ports:
+      - 8384:8384
+      - 22000:22000/tcp
+      - 22000:22000/udp
+      - 21027:21027/udp
+    environment:
+      <<: *default-tz-puid-pgid
