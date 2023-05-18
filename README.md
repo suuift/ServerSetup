@@ -2,9 +2,7 @@
 
 Download and install Docker for Windows: https://hub.docker.com/editions/community/docker-ce-desktop-windows/
 
-Download DockerSetup and unzip to /docker
-
-Downlaod example.env or create empty file ".env" in path /docker if it's not already there
+Download this repository and unzip to /docker
 
 Edit docker-compose.yml and .env with necessary path changes
 
