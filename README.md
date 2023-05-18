@@ -40,8 +40,6 @@ Forward ports 80 and 443 (website), 32400 (plex), 25565 (minecraft) on the route
 
 # Plex Setup
 
-Download Plex: https://www.plex.tv/media-server-downloads/
-
 Go to https://www.plex.tv/claim
 
 copy plex claim to .env in /docker
