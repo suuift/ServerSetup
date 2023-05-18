@@ -4,11 +4,11 @@ Download and install Docker for Windows: https://hub.docker.com/editions/communi
 
 Download DockerSetup and unzip to /docker
 
+Downlaod example.env or create empty file ".env" in path /docker if it's not already there
+
 Edit docker-compose.yml and .env with necessary path changes
 
 Create empty file ".docker-gc-exclude" in path /docker/appdata/docker-gc if it's not already there
-
-Create empty file ".env" in path /docker if it's not already there
 
 Create empty file ".htpassword" in path /docker/shared if it's not already there
 
